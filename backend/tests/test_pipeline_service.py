@@ -20,8 +20,10 @@ def make_png_bytes(width=200, height=200, seed=0) -> bytes:
 
 
 def _upload_carriers(db_session, count: int, width=200, height=200):
-    for seed in range(count):
+    return [
         upload_and_analyze_carrier(db_session, f"carrier{seed}.png", make_png_bytes(width, height, seed))
+        for seed in range(count)
+    ]
 
 
 def test_hide_file_creates_completed_transfer_with_stego_images(db_session):
@@ -55,6 +57,48 @@ def test_hide_file_fails_when_carriers_too_small(db_session):
 
     with pytest.raises(PipelineError):
         hide_file(db_session, "secret.txt", b"X" * 5000, fragment_count=2)
+
+
+def test_hide_file_with_explicit_carrier_ids_ignores_other_carriers(db_session):
+    # An unrelated carrier pool from a "previous session" that must NOT be
+    # touched when carrier_ids scopes the hide to a specific set.
+    _upload_carriers(db_session, count=5, width=400, height=400)  # higher capacity/score
+    session_carriers = _upload_carriers(db_session, count=2, width=100, height=100)
+    session_ids = [c.id for c in session_carriers]
+
+    transfer = hide_file(
+        db_session, "secret.txt", b"scoped carrier test payload", fragment_count=2, carrier_ids=session_ids
+    )
+
+    used_carrier_ids = {s.carrier_id for s in transfer.stego_images}
+    assert used_carrier_ids == set(session_ids)
+
+
+def test_hide_file_with_unknown_carrier_id_raises_clear_error(db_session):
+    _upload_carriers(db_session, count=2)
+
+    with pytest.raises(PipelineError, match="Unknown carrier"):
+        hide_file(
+            db_session,
+            "secret.txt",
+            b"payload",
+            fragment_count=1,
+            carrier_ids=["does-not-exist"],
+        )
+
+
+def test_hide_file_with_too_few_scoped_carriers_raises_clear_error(db_session):
+    session_carriers = _upload_carriers(db_session, count=1)
+    _upload_carriers(db_session, count=5)  # plenty available globally, but not in scope
+
+    with pytest.raises(PipelineError, match="Need 2 carrier images but only 1"):
+        hide_file(
+            db_session,
+            "secret.txt",
+            b"payload",
+            fragment_count=2,
+            carrier_ids=[session_carriers[0].id],
+        )
 
 
 def test_stego_images_can_be_extracted_and_reconstructed_to_original(db_session):

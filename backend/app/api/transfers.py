@@ -28,14 +28,16 @@ router = APIRouter(prefix="/transfers", tags=["transfers"])
 async def hide_file_endpoint(
     file: UploadFile,
     fragment_count: int | None = Form(default=None),
+    carrier_ids: str | None = Form(default=None),
     db: Session = Depends(get_db),
 ) -> TransferHideResponse:
     settings = get_settings()
     data = await file.read()
     count = fragment_count or settings.default_fragment_count
+    ids = [c.strip() for c in carrier_ids.split(",") if c.strip()] if carrier_ids else None
 
     try:
-        transfer = hide_file(db, file.filename or "unnamed", data, count)
+        transfer = hide_file(db, file.filename or "unnamed", data, count, carrier_ids=ids)
     except PipelineError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:

@@ -3,16 +3,17 @@ import { Link } from "react-router-dom";
 import Card from "../components/Card";
 import Dropzone from "../components/Dropzone";
 import ProgressBar from "../components/ProgressBar";
-import { apiErrorMessage, hideFile, rankCarriers, uploadCarrier } from "../services/api";
-import type { CarrierRankResponse } from "../types/carrier";
+import { apiErrorMessage, hideFile, uploadCarrier } from "../services/api";
 import type { TransferHideResponse } from "../types/transfer";
 
 interface CarrierUpload {
   key: string;
+  id?: string;
   filename: string;
   progress: number;
   status: "uploading" | "done" | "error";
   score?: number;
+  capacityBytes?: number;
   error?: string;
 }
 
@@ -27,20 +28,11 @@ export default function HideFile() {
   const [fragmentCount, setFragmentCount] = useState(3);
 
   const [carrierUploads, setCarrierUploads] = useState<CarrierUpload[]>([]);
-  const [ranking, setRanking] = useState<CarrierRankResponse | null>(null);
 
   const [isHiding, setIsHiding] = useState(false);
   const [hideProgress, setHideProgress] = useState(0);
   const [hideResult, setHideResult] = useState<TransferHideResponse | null>(null);
   const [hideError, setHideError] = useState<string | null>(null);
-
-  const refreshRanking = async () => {
-    try {
-      setRanking(await rankCarriers(10));
-    } catch {
-      // Ranking is a convenience view; ignore transient failures here.
-    }
-  };
 
   const handleCarrierFiles = (files: File[]) => {
     for (const file of files) {
@@ -58,10 +50,17 @@ export default function HideFile() {
         .then((metrics) => {
           setCarrierUploads((prev) =>
             prev.map((u) =>
-              u.key === key ? { ...u, status: "done", score: metrics.overall_score } : u,
+              u.key === key
+                ? {
+                    ...u,
+                    status: "done",
+                    id: metrics.id,
+                    score: metrics.overall_score,
+                    capacityBytes: metrics.max_payload_bytes,
+                  }
+                : u,
             ),
           );
-          refreshRanking();
         })
         .catch((err) => {
           setCarrierUploads((prev) =>
@@ -73,16 +72,24 @@ export default function HideFile() {
     }
   };
 
-  const carriersReady = carrierUploads.filter((u) => u.status === "done").length;
+  const readyCarriers = carrierUploads.filter(
+    (u): u is CarrierUpload & { id: string; score: number } => u.status === "done" && !!u.id,
+  );
+  const carriersReady = readyCarriers.length;
+  // Only ever recommend/use carriers uploaded in *this* session -- never the
+  // server's entire historical carrier pool, which would be surprising.
+  const recommended = [...readyCarriers].sort((a, b) => b.score - a.score).slice(0, 3);
+  const hasEnoughCarriers = carriersReady >= fragmentCount;
 
   const handleHide = async () => {
-    if (!secretFile) return;
+    if (!secretFile || !hasEnoughCarriers) return;
     setIsHiding(true);
     setHideProgress(0);
     setHideResult(null);
     setHideError(null);
     try {
-      const result = await hideFile(secretFile, fragmentCount, setHideProgress);
+      const carrierIds = readyCarriers.map((u) => u.id);
+      const result = await hideFile(secretFile, fragmentCount, carrierIds, setHideProgress);
       setHideResult(result);
     } catch (err) {
       setHideError(apiErrorMessage(err));
@@ -96,7 +103,7 @@ export default function HideFile() {
       <div>
         <h1 className="text-2xl font-semibold text-slate-100">Hide File</h1>
         <p className="mt-1 text-slate-400">
-          Encrypt a secret file and hide it inside the best available carrier images.
+          Encrypt a secret file and hide it inside the carrier images you upload below.
         </p>
       </div>
 
@@ -126,7 +133,7 @@ export default function HideFile() {
       <Card title="2. Carrier Images">
         <Dropzone
           label="Drop PNG carrier images here"
-          hint="Upload several images — CloudHide will analyze and rank them automatically"
+          hint="Only images dropped here are used for this transfer — not any carriers uploaded previously"
           accept="image/png"
           multiple
           onFiles={handleCarrierFiles}
@@ -157,14 +164,16 @@ export default function HideFile() {
           </ul>
         )}
 
-        {ranking && ranking.recommended.length > 0 && (
+        {recommended.length > 0 && (
           <div className="mt-4 rounded-md border border-indigo-500/30 bg-indigo-500/5 p-3">
-            <p className="text-xs font-medium text-indigo-300">Recommended carriers</p>
+            <p className="text-xs font-medium text-indigo-300">
+              Best of your uploaded carriers
+            </p>
             <ol className="mt-1 space-y-1 text-xs text-slate-400">
-              {ranking.recommended.map((c, i) => (
+              {recommended.map((c, i) => (
                 <li key={c.id}>
-                  {i + 1}. {c.original_filename} — score {c.overall_score.toFixed(1)}/100,{" "}
-                  {c.max_payload_bytes.toLocaleString()} bytes capacity
+                  {i + 1}. {c.filename} — score {c.score.toFixed(1)}/100
+                  {c.capacityBytes !== undefined && `, ${c.capacityBytes.toLocaleString()} bytes capacity`}
                 </li>
               ))}
             </ol>
@@ -184,17 +193,19 @@ export default function HideFile() {
             className="mt-1 w-32 rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-slate-100 focus:border-indigo-500 focus:outline-none"
           />
         </label>
-        <p className="mt-2 text-xs text-slate-500">
+        <p className={`mt-2 text-xs ${hasEnoughCarriers ? "text-slate-500" : "text-amber-400"}`}>
           The secret file will be split into this many encrypted fragments, each hidden in a
           separate carrier image. You have {carriersReady} carrier{carriersReady === 1 ? "" : "s"}{" "}
-          ready.
+          ready
+          {!hasEnoughCarriers &&
+            ` — upload ${fragmentCount - carriersReady} more before you can hide.`}
         </p>
       </Card>
 
       <div className="flex items-center gap-4">
         <button
           onClick={handleHide}
-          disabled={!secretFile || isHiding}
+          disabled={!secretFile || !hasEnoughCarriers || isHiding}
           className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isHiding ? "Hiding…" : "Hide File"}

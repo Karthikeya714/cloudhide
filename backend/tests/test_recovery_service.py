@@ -6,7 +6,7 @@ from PIL import Image
 
 from app.services.carrier_service import upload_and_analyze_carrier
 from app.services.file_service import read_bytes, resolve_path, sha256_hex
-from app.services.pipeline_service import hide_file
+from app.services.pipeline_service import PipelineError, hide_file
 from app.services.recovery_service import RecoveryError, recover_transfer
 
 
@@ -68,6 +68,33 @@ def test_recover_fails_on_corrupted_stego_image(db_session):
 
     with pytest.raises(RecoveryError):
         recover_transfer(db_session, transfer.id)
+
+
+def test_recover_on_transfer_whose_hide_failed_does_not_mask_the_failure(db_session):
+    # 4x4 carriers have near-zero capacity -> hide_file() fails before any
+    # stego image is created, leaving the transfer's status as "failed".
+    for seed in range(2):
+        upload_and_analyze_carrier(
+            db_session, f"tiny_carrier{seed}.png", make_png_bytes(width=4, height=4, seed=seed)
+        )
+
+    with pytest.raises(PipelineError):
+        hide_file(db_session, "too_big.bin", b"X" * 5000, fragment_count=2)
+
+    from app.models.transfer import Transfer
+
+    failed_transfer = (
+        db_session.query(Transfer).filter(Transfer.original_filename == "too_big.bin").one()
+    )
+    assert failed_transfer.status == "failed"
+
+    with pytest.raises(RecoveryError, match="never completed successfully"):
+        recover_transfer(db_session, failed_transfer.id)
+
+    # The original "failed" status must survive -- not get overwritten with
+    # the misleading "recovery_failed" (hiding, not recovery, is what broke).
+    db_session.refresh(failed_transfer)
+    assert failed_transfer.status == "failed"
 
 
 def test_recover_fails_when_carrier_has_no_hidden_data(db_session):

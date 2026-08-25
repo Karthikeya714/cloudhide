@@ -58,11 +58,16 @@ export async function rankCarriers(limit = 10): Promise<CarrierRankResponse> {
 export async function hideFile(
   file: File,
   fragmentCount: number,
+  carrierIds: string[],
   onProgress?: (percent: number) => void,
 ): Promise<TransferHideResponse> {
   const form = new FormData();
   form.append("file", file);
   form.append("fragment_count", String(fragmentCount));
+  // Scope the hide to exactly the carriers the caller uploaded this session
+  // -- without this, the backend is free to pick from every carrier ever
+  // uploaded to the server, including unrelated images from past sessions.
+  form.append("carrier_ids", carrierIds.join(","));
   const { data } = await api.post<TransferHideResponse>("/api/transfers/hide", form, {
     onUploadProgress: (event) => {
       if (onProgress && event.total) {

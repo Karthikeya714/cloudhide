@@ -50,9 +50,27 @@ def _select_carrier_for_fragment(
     )
 
 
-def select_carriers_for_fragments(db: Session, fragments: list[Fragment]) -> list[Carrier]:
-    """Greedily assign one carrier per fragment, preferring higher-scoring carriers."""
+def select_carriers_for_fragments(
+    db: Session,
+    fragments: list[Fragment],
+    carrier_ids: list[str] | None = None,
+) -> list[Carrier]:
+    """Greedily assign one carrier per fragment, preferring higher-scoring carriers.
+
+    If `carrier_ids` is given, selection is restricted to exactly those
+    carriers (still ranked best-to-worst among themselves) -- this is what
+    lets the Hide File page use only the carriers the caller just uploaded,
+    instead of silently pulling in every carrier ever uploaded to the server.
+    """
     ranked = rank_carriers(db)
+    if carrier_ids is not None:
+        allowed = set(carrier_ids)
+        ranked = [c for c in ranked if c.id in allowed]
+        if len(ranked) < len(carrier_ids):
+            found_ids = {c.id for c in ranked}
+            missing = allowed - found_ids
+            raise PipelineError(f"Unknown carrier id(s): {', '.join(sorted(missing))}")
+
     if len(ranked) < len(fragments):
         raise PipelineError(
             f"Need {len(fragments)} carrier images but only {len(ranked)} are available. "
@@ -76,6 +94,7 @@ def hide_file(
     original_filename: str,
     secret_data: bytes,
     fragment_count: int,
+    carrier_ids: list[str] | None = None,
 ) -> Transfer:
     """Run the complete hide pipeline and return the populated Transfer."""
     start = time.perf_counter()
@@ -100,7 +119,7 @@ def hide_file(
         transfer.fragmentation_time_ms = (time.perf_counter() - frag_start) * 1000
         transfer.status = "fragmented"
 
-        carriers = select_carriers_for_fragments(db, fragments)
+        carriers = select_carriers_for_fragments(db, fragments, carrier_ids=carrier_ids)
 
         embed_start = time.perf_counter()
         for fragment, carrier in zip(fragments, carriers):

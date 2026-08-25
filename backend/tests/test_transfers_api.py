@@ -12,13 +12,16 @@ def make_png_bytes(width=200, height=200, seed=0) -> bytes:
     return buffer.getvalue()
 
 
-def _upload_carriers(client, count: int):
-    for seed in range(count):
+def _upload_carriers(client, count: int, width=200, height=200, seed_offset=0):
+    ids = []
+    for seed in range(seed_offset, seed_offset + count):
         response = client.post(
             "/api/carriers/upload",
-            files={"file": (f"carrier{seed}.png", BytesIO(make_png_bytes(seed=seed)), "image/png")},
+            files={"file": (f"carrier{seed}.png", BytesIO(make_png_bytes(width, height, seed)), "image/png")},
         )
         assert response.status_code == 201
+        ids.append(response.json()["id"])
+    return ids
 
 
 def test_full_pipeline_end_to_end(client):
@@ -60,6 +63,32 @@ def test_full_pipeline_end_to_end(client):
         assert stego["carrier_filename"]
     assert detail["encryption_time_ms"] > 0
     assert detail["embedding_time_ms"] > 0
+
+
+def test_hide_with_explicit_carrier_ids_only_uses_those_carriers(client):
+    # A larger, unrelated pool that must be ignored when carrier_ids scopes the hide.
+    _upload_carriers(client, count=4, width=400, height=400, seed_offset=100)
+    session_ids = _upload_carriers(client, count=2, width=100, height=100, seed_offset=200)
+
+    response = client.post(
+        "/api/transfers/hide",
+        files={"file": ("secret.txt", BytesIO(b"scoped api test payload"), "text/plain")},
+        data={"fragment_count": "2", "carrier_ids": ",".join(session_ids)},
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert set(body["selected_carrier_ids"]) == set(session_ids)
+
+
+def test_hide_with_unknown_carrier_id_returns_clear_error(client):
+    _upload_carriers(client, count=1)
+    response = client.post(
+        "/api/transfers/hide",
+        files={"file": ("secret.txt", BytesIO(b"payload"), "text/plain")},
+        data={"fragment_count": "1", "carrier_ids": "does-not-exist"},
+    )
+    assert response.status_code == 409
+    assert "Unknown carrier" in response.json()["detail"]
 
 
 def test_hide_fails_gracefully_with_no_carriers(client):

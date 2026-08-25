@@ -111,6 +111,16 @@ def recover_transfer(db: Session, transfer_id: str) -> Transfer:
     if transfer is None:
         raise RecoveryError(f"No transfer with id {transfer_id}")
 
+    if transfer.status not in ("completed", "recovered", "recovery_failed"):
+        # Hiding itself never finished for this transfer (e.g. it's still
+        # "fragmented" or already "failed") -- there is nothing to recover,
+        # and overwriting that status with "recovery_failed" would hide the
+        # real problem (a failed hide) behind a misleading recovery error.
+        raise RecoveryError(
+            f"Transfer {transfer_id} has status '{transfer.status}'; "
+            "hiding never completed successfully, so there is nothing to recover"
+        )
+
     try:
         return _run_recovery(db, transfer, start)
     except RecoveryError:
