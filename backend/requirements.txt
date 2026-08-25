@@ -1,0 +1,16 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sqlalchemy==2.0.36
+pydantic==2.10.4
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+python-multipart==0.0.20
+cryptography==44.0.0
+Pillow==11.1.0
+numpy==2.2.1
+scipy==1.14.1
+scikit-image==0.25.0
+minio==7.2.13
+pytest==8.3.4
+pytest-asyncio==0.25.1
+httpx==0.28.1

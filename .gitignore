@@ -1,0 +1,25 @@
+# Backend
+backend/venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.pytest_cache/
+backend/*.db
+backend/.env
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# Storage (generated data, not checked in)
+storage/uploads/*
+storage/encrypted/*
+storage/fragments/*
+storage/carriers/*
+storage/stego/*
+storage/recovered/*
+!storage/**/.gitkeep
+
+# OS / editor
+.DS_Store
+*.log
